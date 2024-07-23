@@ -11,6 +11,6 @@
 lib.makeScope newScope (
   self: {
     inherit wrfVersion;
-    llama-cpp = self.callPackage ./package.nix { };
+    wrf = self.callPackage ./package.nix { };
   }
 )

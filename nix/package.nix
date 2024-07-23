@@ -6,7 +6,7 @@
   ninja,
   gcc,
   gfortran,
-  #pkgs-config,
+  pkg-config,
   autoconf,
   m4,
   netcdffortran,
@@ -49,7 +49,7 @@ let
     lib.optionals useMpi [ "dmpar" ]
     ++ lib.optionals useOpenMP [ "smpar" ]
   ;
-
+ 
   # The information for the serial / openmp / mpi / openmp + mpi
   #   1. (serial)   2. (smpar)   3. (dmpar)   4. (dm+sm)   PGI (pgf90/pgcc)
   #   5. (serial)   6. (smpar)   7. (dmpar)   8. (dm+sm)   INTEL (ifort/icc)
@@ -76,9 +76,8 @@ stdenv.mkDerivation (
   finalAttrs: {
     pname = "WRF-${pnameSuffix}";
     version = wrfVersion;
-
+    dontAddPrefix = false;
     # https://www2.mmm.ucar.edu/wrf/OnLineTutorial/compilation_tutorial.php
-
     src = lib.cleanSourceWith {
       filter = name: type:
         let
@@ -102,6 +101,7 @@ stdenv.mkDerivation (
       ninja
       autoconf
       m4
+      netcdf
       netcdffortran
       curl
       git
@@ -114,52 +114,67 @@ stdenv.mkDerivation (
     ];
 
 
-    
-#  preConfigurePhases = ["testCompilers"];
+    env = {
+      NETCDF = netcdffortran;
+      NETCDF_classic = 1;
+      DIR = "./Build_WRF/LIBRARIES";
+      CC = gcc;
+      CX = gcc;
+      FC = gfortran;
+      FCFLAGS = "-m64";
+      F77 = gfortran;
+      FFLAGS = "-m64";
+      JASPERLIB = "${jasper}/grib2/lib";
+      JASPERINC = "${jasper}/grib2/include";
+      LDFLAGS = "-L${jasper}/grib2/lib";
+      CPPFLAGS = "-I${jasper}/grib2/include";
+      HDF5 = hdf5-fortran;
+      PHDF5 = hdf5-mpi;
+    };
 
-  # testCompilers = ''
-  #   curl -k https://www2.mmm.ucar.edu/wrf/OnLineTutorial/compile_tutorial/tar_files/Fortran_C_tests.tar -o Fortran_C_tests.tar
-  #   tar -xvf Fortran_C_tests.tar
-  # '';
-  env = {
-    NETCDF = pkgs.netcdffortran;
-    NETCDF_classic = 1;
-    DIR = "./Build_WRF/LIBRARIES";
-    CC = pkgs.gcc;
-    CX = pkgs.gcc;
-    FC = pkgs.gfortran;
-    FCFLAGS = "-m64";
-    F77 = pkgs.gfortran;
-    FFLAGS = "-m64";
-    JASPERLIB = "${pkgs.jasper}/grib2/lib";
-    JASPERINC = "${pkgs.jasper}/grib2/include";
-    LDFLAGS = "-L${pkgs.jasper}/grib2/lib";
-    CPPFLAGS = "-I${pkgs.jasper}/grib2/include";
-    HDF5 = pkgs.hdf5-fortran;
-    PHDF5 = pkgs.hdf5-mpi;
-  };
+    preConfigure = ''
+cat << EOF >> wrf_config.cmake
+# https://cmake.org/cmake/help/latest/module/FindMPI.html#variables-for-locating-mpi
+set( MPI_Fortran_COMPILER "mpif90" )
+set( MPI_C_COMPILER       "mpicc" )
 
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER.html
+set( CMAKE_Fortran_COMPILER "gfortran" )
+set( CMAKE_C_COMPILER       "gcc" )
 
-  # shellHook = ''
-  #   mkdir Build_WRF TESTS
-  # '';
-  
-  patchPhase = ''
-  sed -i 's/ $I_really_want_to_output_grib2_from_WRF = "FALSE" ;/ $I_really_want_to_output_grib2_from_WRF = "TRUE" ;/' arch/Config.pl
-  '';
+# Our own addition
+set( CMAKE_C_PREPROCESSOR       "cpp" )
+set( CMAKE_C_PREPROCESSOR_FLAGS   )
 
-  configurePhase = ''
-    mkdir Build_WRF TESTS
-    ./configure << EOF
-    35
-    1
-    EOF
-  '';
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_FLAGS_INIT.html
+set( CMAKE_Fortran_FLAGS_INIT    " -w -fconvert=big-endian -frecord-marker=4" )
+set( CMAKE_C_FLAGS_INIT          " -w -O3   -DMACOS" )
 
-  buildPhase = ''
-             ./compile em_real
-  '';
+# https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_FLAGS_CONFIG_INIT.html
+set( CMAKE_Fortran_FLAGS_DEBUG_INIT    "" )
+set( CMAKE_Fortran_FLAGS_RELEASE_INIT  "" )
+set( CMAKE_C_FLAGS_DEBUG_INIT    "" )
+set( CMAKE_C_FLAGS_RELEASE_INIT  "" )
 
+# Project specifics now
+set( WRF_MPI_Fortran_FLAGS  "" )
+set( WRF_MPI_C_FLAGS        "" )
+set( WRF_ARCH_LOCAL         "-DNONSTANDARD_SYSTEM_SUBR -DMACOS  CONFIGURE_D_CTSM"  )
+set( WRF_M4_FLAGS           ""    )
+set( WRF_FCOPTIM            "-O2 -ftree-vectorize -funroll-loops"     )
+set( WRF_FCNOOPT            "-O0"     )
+set( WRF_CORE                         ARW          CACHE STRING "Set by configuration" FORCE )
+set( WRF_NESTING                      BASIC        CACHE STRING "Set by configuration" FORCE )
+set( WRF_CASE                         EM_REAL      CACHE STRING "Set by configuration" FORCE )
+set( USE_MPI                          OFF          CACHE STRING "Set by configuration" FORCE )
+set( USE_OPENMP                       OFF          CACHE STRING "Set by configuration" FORCE )
+EOF
+                   '';
+    cmakeFlags = [
+      (cmakeFeature "CMAKE_TOOLCHAIN_FILE" "wrf_config.cmake")
+      (cmakeBool "USE_MPI" false)
+      (cmakeBool "USE_OPENMP" false)
+    ];
 
     passthru = {
       inherit
